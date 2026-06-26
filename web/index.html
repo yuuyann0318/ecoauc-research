@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+<title>仕入れリサーチ｜エコリング（会員限定）</title>
+<style>
+  :root{
+    --bg:#f3f4f3; --panel:#fff; --ink:#16181a; --sub:#71767a; --line:#e6e8e7; --soft:#f1f3f2;
+    --accent:#16322a; --price:#c0392b; --r:18px;
+    --shadow:0 1px 2px rgba(20,30,25,.04),0 10px 30px rgba(20,30,25,.06);
+    --shadow-h:0 6px 14px rgba(20,30,25,.07),0 22px 48px rgba(20,30,25,.12);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;line-height:1.5;-webkit-font-smoothing:antialiased}
+
+  /* ── ログインゲート ── */
+  #gate{position:fixed;inset:0;z-index:100;background:linear-gradient(160deg,#16322a,#0c1f19);display:flex;align-items:center;justify-content:center;padding:24px}
+  body.authed #gate{display:none}
+  body.authed #app{display:block}
+  #app{display:none}
+  .gatebox{background:#fff;border-radius:20px;padding:30px 26px;max-width:380px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.4)}
+  .gatebox .lk{width:54px;height:54px;border-radius:15px;background:var(--accent);color:#fff;display:grid;place-items:center;font-size:24px;margin:0 auto 14px}
+  .gatebox h1{margin:0 0 4px;font-size:18px;font-weight:750;text-align:center}
+  .gatebox p{margin:0 0 18px;font-size:12px;color:var(--sub);line-height:1.6;text-align:center}
+  .gatebox label{display:block;font-size:11px;color:var(--sub);font-weight:700;margin:10px 2px 4px}
+  .gatebox input{width:100%;border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:15px;outline:0;font-family:inherit}
+  .gatebox input:focus{border-color:var(--accent);box-shadow:0 0 0 4px rgba(22,50,42,.1)}
+  .gatebox button{width:100%;margin-top:16px;border:0;background:var(--accent);color:#fff;font-weight:700;font-size:15px;padding:13px;border-radius:12px;cursor:pointer;font-family:inherit;transition:.15s}
+  .gatebox button:hover{opacity:.9}
+  .gatebox button:disabled{opacity:.5;cursor:default}
+  .gateerr{color:var(--price);font-size:12.5px;font-weight:700;margin-top:11px;min-height:16px;text-align:center}
+  .gatenote{margin-top:14px;font-size:10.5px;color:#9aa39e;line-height:1.6;text-align:center}
+
+  header{position:sticky;top:0;z-index:30;background:rgba(247,248,247,.85);backdrop-filter:saturate(160%) blur(16px);-webkit-backdrop-filter:saturate(160%) blur(16px);border-bottom:1px solid var(--line)}
+  .bar{max-width:1180px;margin:0 auto;padding:13px 18px;display:flex;align-items:center;gap:13px}
+  .logo{width:38px;height:38px;border-radius:11px;background:var(--accent);color:#fff;display:grid;place-items:center;font-weight:800;font-size:14px;flex:none}
+  .brand h1{margin:0;font-size:16px;font-weight:750}
+  .brand span{font-size:11px;color:var(--sub);letter-spacing:.05em}
+  .spacer{flex:1}
+  .stat{text-align:right;font-size:11px;color:var(--sub);line-height:1.45;white-space:nowrap}
+  .stat b{color:var(--ink);font-size:14px;font-weight:700}
+  .hbtn{appearance:none;border:1px solid var(--line);background:#fff;border-radius:999px;padding:8px 13px;font-size:12px;font-weight:600;cursor:pointer}
+  .reload{background:var(--accent);color:#fff;border:0}
+
+  .controls{max-width:1180px;margin:0 auto;padding:0 18px}
+  .chips{display:flex;gap:8px;overflow-x:auto;padding:13px 0 4px;scrollbar-width:none}
+  .chips::-webkit-scrollbar{display:none}
+  .chip{flex:none;border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;transition:.15s;display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
+  .chip.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .chip .n{font-size:11px;font-weight:700;color:var(--sub);background:var(--soft);padding:1px 7px;border-radius:999px;min-width:20px;text-align:center}
+  .chip.on .n{color:#fff;background:rgba(255,255,255,.22)}
+  .tools{display:flex;gap:10px;flex-wrap:wrap;padding:8px 0 14px;align-items:center}
+  .search{flex:1;min-width:180px;position:relative}
+  .search svg{position:absolute;left:13px;top:50%;transform:translateY(-50%);opacity:.4}
+  .search input{width:100%;border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:11px 13px 11px 38px;font-size:14px;outline:0;font-family:inherit}
+  .fld{display:flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:6px 12px}
+  .fld label{font-size:10px;color:var(--sub)}
+  .fld input{width:74px;border:0;outline:0;background:transparent;font-size:14px;font-family:inherit;-moz-appearance:textfield}
+  .fld input::-webkit-outer-spin-button,.fld input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+  .seg{display:flex;border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:3px;gap:2px}
+  .seg button{appearance:none;border:0;background:transparent;font-family:inherit;font-size:12px;font-weight:600;color:var(--sub);padding:8px 13px;border-radius:9px;cursor:pointer;transition:.15s;white-space:nowrap}
+  .seg button.on{background:var(--accent);color:#fff}
+  /* PCでは .filters は存在しないかのように（中の価格・並び替えが .tools の直下要素として従来配置） */
+  .filters{display:contents}
+
+  .layout{max-width:1180px;margin:0 auto;padding:6px 18px 40px;display:flex;gap:18px;align-items:flex-start}
+  main{flex:1;min-width:0}
+
+  /* 利益計算パネル（右・PC専用） */
+  .calc{width:288px;flex:none;position:sticky;top:204px;max-height:calc(100vh - 220px);overflow-y:auto;
+    background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);padding:16px}
+  .calc h2{margin:0 0 3px;font-size:14px;font-weight:750}
+  .csub{font-size:11px;color:var(--sub);margin-bottom:12px;line-height:1.5}
+  .clabel{display:block;font-size:11px;color:var(--sub);font-weight:700;margin:11px 1px 5px}
+  .cinput{display:flex;align-items:center;gap:7px;border:1px solid var(--line);background:var(--soft);
+    border-radius:11px;padding:10px 12px;transition:.15s}
+  .cinput:focus-within{border-color:var(--accent);background:#fff;box-shadow:0 0 0 3px rgba(22,50,42,.08)}
+  .cinput .cy{color:var(--sub);font-weight:800;font-size:14px}
+  .cinput input{border:0;outline:0;width:100%;background:transparent;font-size:16px;font-weight:700;font-family:inherit;-moz-appearance:textfield}
+  .cinput input::-webkit-outer-spin-button,.cinput input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+  .cresult{margin-top:14px}
+  .cempty{font-size:11.5px;color:var(--sub);text-align:center;line-height:1.6;padding:18px 6px;background:var(--soft);border-radius:12px}
+  .crow{display:flex;justify-content:space-between;align-items:baseline;font-size:12.5px;padding:5px 2px;color:var(--sub)}
+  .crow b{color:var(--ink);font-weight:700}
+  .crow.minus b{color:var(--price)}
+  .cprofit{margin-top:10px;padding:13px 14px;border-radius:13px;background:var(--accent);color:#fff;text-align:center}
+  .cprofit .pl{font-size:11px;opacity:.82;font-weight:600}
+  .cprofit .pv{font-size:26px;font-weight:850;letter-spacing:-.02em;line-height:1.15}
+  .cprofit .pr{font-size:11.5px;font-weight:700;opacity:.92;margin-top:1px}
+  .cprofit.loss{background:var(--price)}
+  .crev{margin-top:16px;padding-top:14px;border-top:1px dashed var(--line)}
+  .crev .gcat{font-size:10px;font-weight:800;letter-spacing:1.2px;color:var(--accent);margin:0 0 7px}
+  .crevout{margin-top:10px;font-size:12px;color:var(--sub);line-height:1.6;background:var(--soft);border-radius:11px;padding:11px 12px;text-align:center}
+  .crevout.has{color:var(--ink);text-align:left;background:rgba(22,50,42,.07)}
+  .crevout .bigbid{font-size:21px;font-weight:850;color:var(--accent);letter-spacing:-.01em}
+  .ctable-btn{margin-top:14px;width:100%;border:1px solid var(--line);background:var(--soft);border-radius:10px;
+    padding:9px;font-size:11.5px;font-weight:700;color:var(--sub);cursor:pointer;font-family:inherit}
+  .ctable{margin-top:8px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .ctrow{display:flex;justify-content:space-between;font-size:11.5px;padding:7px 11px;border-bottom:1px solid var(--line)}
+  .ctrow b{font-weight:700;color:var(--ink)}
+  .ctnote{font-size:10px;color:var(--sub);padding:7px 11px;line-height:1.5}
+  .cfoot{margin-top:14px;font-size:10px;color:var(--sub);line-height:1.5;text-align:center}
+  .warn{background:#fff4e5;border:1px solid #f3d2a0;color:#8a5300;border-radius:12px;padding:12px 15px;font-size:13px;font-weight:600;margin:14px 0 4px;line-height:1.5}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(184px,1fr));gap:16px;margin-top:10px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;box-shadow:var(--shadow);display:flex;flex-direction:column;transition:transform .18s,box-shadow .18s}
+  .card:hover{transform:translateY(-3px);box-shadow:var(--shadow-h)}
+  .thumb{position:relative;aspect-ratio:1/1;background:#eceeed;display:block;overflow:hidden}
+  .thumb img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .3s}
+  .card:hover .thumb img{transform:scale(1.04)}
+  .tag{position:absolute;top:9px;left:9px;font-size:10px;font-weight:700;padding:4px 9px;border-radius:999px;background:rgba(22,50,42,.76);color:#fff;backdrop-filter:blur(4px)}
+  .rank{position:absolute;top:9px;right:9px;font-size:10px;font-weight:800;padding:4px 9px;border-radius:999px;background:rgba(192,57,43,.92);color:#fff;letter-spacing:.02em}
+  .noimg{width:100%;height:100%;display:grid;place-items:center;color:#b3bbb7;font-size:12px}
+  .body{padding:11px 13px 13px;display:flex;flex-direction:column;gap:6px;flex:1}
+  .bd{font-size:11px;font-weight:750;color:var(--accent);letter-spacing:.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ttl{font-size:12.5px;line-height:1.45;font-weight:550;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:36px}
+  .pr{display:flex;align-items:baseline;gap:5px;margin-top:2px}
+  .pr .lb{font-size:10px;color:var(--sub);font-weight:700}
+  .pr .now{font-size:19px;font-weight:800;color:var(--price)}
+  .pr .na{font-size:12px;color:var(--sub);font-weight:600}
+  .meta{font-size:10.5px;color:var(--sub);display:flex;gap:6px;flex-wrap:wrap}
+  .meta .mt{background:var(--soft);padding:2px 8px;border-radius:999px}
+  .act{margin-top:auto;padding-top:9px}
+  .act a{display:block;text-align:center;font-size:12px;font-weight:700;padding:10px 4px;border-radius:11px;text-decoration:none;background:var(--accent);color:#fff;transition:.15s}
+  .act a:hover{opacity:.88}
+  .empty{text-align:center;color:var(--sub);padding:70px 20px}
+  .empty .big{font-size:15px;font-weight:600;color:var(--ink);margin-bottom:6px}
+  .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(10px);background:var(--accent);color:#fff;font-size:13px;font-weight:600;padding:12px 22px;border-radius:999px;box-shadow:var(--shadow-h);opacity:0;pointer-events:none;transition:.28s;z-index:60}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  /* スマホ専用UI部品はPCでは完全非表示（PC表示に一切影響させない） */
+  .sheet-grip,.calc-close,.calc-fab,.calc-backdrop{display:none}
+
+  /* ══════════════════════════════════════════════════════════
+     スマホ最適化（幅560px以下のみ。PC表示には一切影響しない）
+     ══════════════════════════════════════════════════════════ */
+  @media(max-width:560px){
+    /* ── 工夫① 検索ヒーロー型ヘッダー ── */
+    /* すりガラスを外す：これが内側の固定バーの基準枠を作ってしまい下部固定を妨げるため */
+    header{background:rgba(247,248,247,.97);backdrop-filter:none;-webkit-backdrop-filter:none}
+    .bar{flex-wrap:wrap;padding:11px 14px;gap:8px}
+    .logo{width:31px;height:31px;border-radius:9px;font-size:12px}
+    .brand{flex:1;min-width:0}
+    .brand h1{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .brand span{display:none}
+    .spacer{display:none}
+    .reload{display:none}  /* スマホは自動更新(60秒毎)があるため「最新」ボタンは省きスッキリさせる */
+    .logout{order:4}
+    .hbtn{flex:none;padding:7px 13px;font-size:12px}
+    .bar .stat{order:5;flex-basis:100%;width:100%;text-align:left;white-space:normal;font-size:11px;line-height:1.45;margin-top:-1px}
+    .bar .stat br{display:none}
+    .bar .stat b{font-size:12px}
+    .controls{padding:0 14px}
+    .chips{padding:11px 0 4px;-webkit-overflow-scrolling:touch}
+    .tools{padding:9px 0 12px}
+    .search{min-width:0;width:100%}
+    .search input{padding:14px 14px 14px 42px;font-size:16px;border-radius:13px}
+    .search svg{left:15px;width:17px;height:17px}
+
+    /* ── 工夫② 親指ファースト固定フィルターバー ── */
+    .filters{display:flex;flex-direction:column;gap:8px;
+      position:fixed;left:0;right:0;bottom:0;z-index:40;
+      padding:10px 14px calc(10px + env(safe-area-inset-bottom));
+      background:rgba(247,248,247,.94);
+      backdrop-filter:saturate(160%) blur(18px);-webkit-backdrop-filter:saturate(160%) blur(18px);
+      border-top:1px solid var(--line);box-shadow:0 -7px 22px rgba(20,30,25,.08)}
+    .filters .fld{width:100%;justify-content:center;gap:9px;padding:10px 12px;border-radius:13px}
+    .filters .fld label{font-size:11px;font-weight:700}
+    .filters .fld input{flex:1;width:auto;text-align:center;font-size:16px}
+    .filters .seg{width:100%;padding:4px;border-radius:13px}
+    .filters .seg button{flex:1;text-align:center;padding:12px 4px;font-size:13px}
+
+    /* 固定バーに隠れないよう本文に余白、トーストも上げる */
+    .layout{display:block;padding:6px 14px calc(168px + env(safe-area-inset-bottom))}
+    .toast{bottom:calc(150px + env(safe-area-inset-bottom))}
+
+    /* ── 工夫③ 利益計算をスマホでも：下からせり上がるボトムシート ── */
+    .calc{display:block;position:fixed;left:0;right:0;bottom:0;top:auto;
+      width:auto;max-width:none;max-height:86vh;overflow-y:auto;-webkit-overflow-scrolling:touch;
+      margin:0;border:0;border-radius:24px 24px 0 0;
+      padding:6px 18px calc(24px + env(safe-area-inset-bottom));
+      box-shadow:0 -14px 46px rgba(20,30,25,.24);
+      transform:translateY(115%);transition:transform .34s cubic-bezier(.22,.61,.36,1);
+      z-index:80}
+    body.calc-open .calc{transform:translateY(0)}
+    .sheet-grip{display:block;position:sticky;top:0;width:44px;height:5px;border-radius:999px;
+      background:#d7dbd9;margin:9px auto 4px}
+    .calc-close{display:grid;place-items:center;position:absolute;top:13px;right:15px;
+      width:33px;height:33px;border:0;border-radius:50%;background:var(--soft);color:var(--sub);
+      font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;z-index:2}
+    .calc h2{font-size:17px;margin-top:2px}
+    .csub{font-size:12px}
+
+    /* 利益計算を開くボタン（固定フィルターバーの上にフロート） */
+    .calc-fab{display:inline-flex;align-items:center;gap:7px;position:fixed;right:14px;
+      bottom:calc(126px + env(safe-area-inset-bottom));z-index:45;
+      border:0;border-radius:999px;padding:13px 19px;
+      background:var(--accent);color:#fff;font-family:inherit;font-size:14px;font-weight:750;
+      box-shadow:0 8px 24px rgba(22,50,42,.36);cursor:pointer;transition:.18s}
+    .calc-fab:active{transform:scale(.95)}
+    .calc-fab .cf-ic{font-size:17px}
+    body.calc-open .calc-fab{opacity:0;pointer-events:none;transform:translateY(10px)}
+
+    .calc-backdrop{display:block;position:fixed;inset:0;z-index:75;
+      background:rgba(10,20,16,.42);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);
+      opacity:0;pointer-events:none;transition:opacity .3s}
+    body.calc-open .calc-backdrop{opacity:1;pointer-events:auto}
+
+    /* タッチ端末ではホバー浮きを無効化し、押した時だけ反応 */
+    .card:hover{transform:none;box-shadow:var(--shadow)}
+    .card:hover .thumb img{transform:none}
+    .card:active{transform:scale(.985)}
+    .body{padding:11px 12px 13px;gap:6px}
+    .bd{font-size:11px}
+    .ttl{font-size:12.5px;line-height:1.45;min-height:34px}
+    .pr .now{font-size:18px}
+    .meta{font-size:10px;gap:5px}
+    .act{padding-top:8px}
+    .act a{padding:12px 4px;font-size:12.5px;border-radius:12px}
+    .grid{grid-template-columns:repeat(2,1fr);gap:11px}
+    /* 長いキーワードタグがランク表示に被らないよう省略 */
+    .tag{max-width:calc(100% - 72px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+    /* ログイン画面も指で押しやすく（iOSの拡大防止に16px） */
+    .gatebox input{font-size:16px}
+  }
+</style>
+</head>
+<body>
+
+<!-- ログインゲート（エコリング会員確認） -->
+<div id="gate">
+  <div class="gatebox">
+    <div class="lk">🔑</div>
+    <h1>エコリング会員ログイン</h1>
+    <p>エコリング会員の方だけが閲覧できます。<br>会員のメール・パスワードでログインしてください。</p>
+    <label>エコリング会員メール</label>
+    <input id="email" type="email" autocomplete="username" placeholder="you@example.com">
+    <label>パスワード</label>
+    <input id="pw" type="password" autocomplete="current-password" placeholder="エコリングのパスワード">
+    <button id="loginBtn">ログインして閲覧</button>
+    <div class="gateerr" id="gateErr"></div>
+    <div class="gatenote">入力したメール・パスワードは<b>エコリングでの本人確認だけ</b>に使い、このツールには<b>保存されません</b>（照合後すぐ破棄）。通信はHTTPSで暗号化されます。</div>
+  </div>
+</div>
+
+<!-- アプリ本体 -->
+<div id="app">
+<header>
+  <div class="bar">
+    <div class="logo">エコ</div>
+    <div class="brand"><h1>エコリング相場リサーチ</h1><span>EcoRing 落札相場・会員限定</span></div>
+    <div class="spacer"></div>
+    <div class="stat" id="stat">…</div>
+    <button class="hbtn reload" id="reloadBtn">最新</button>
+    <button class="hbtn" id="logoutBtn">ログアウト</button>
+  </div>
+  <div class="controls">
+    <div class="chips" id="chips"></div>
+    <div class="tools">
+      <div class="search">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        <input id="fQuery" type="text" placeholder="ブランド・型番・品名で検索">
+      </div>
+      <div class="filters">
+        <div class="fld"><label>落札価格</label><input id="fMin" type="number" inputmode="numeric" placeholder="下限"><span>〜</span><input id="fMax" type="number" inputmode="numeric" placeholder="上限"></div>
+        <div class="seg" id="seg"><button data-sort="new" class="on">新着</button><button data-sort="price_asc">安い順</button><button data-sort="price_desc">高い順</button></div>
+      </div>
+    </div>
+  </div>
+</header>
+<div class="layout">
+  <main>
+    <div id="warn" class="warn" style="display:none"></div>
+    <div class="grid" id="grid"></div>
+    <div class="empty" id="empty" style="display:none"><div class="big">該当する落札相場がありません</div><div>検索条件を変えるか、先生のデータ更新をお待ちください</div></div>
+  </main>
+
+  <aside class="calc" id="calc">
+    <div class="sheet-grip" aria-hidden="true"></div>
+    <button class="calc-close" id="calcClose" type="button" aria-label="閉じる">✕</button>
+    <h2>🧮 利益計算</h2>
+    <div class="csub">エコリングで落札→メルカリ販売の利益</div>
+    <label class="clabel">売値（メルカリ予想売価）</label>
+    <div class="cinput"><span class="cy">¥</span><input id="cSell" type="number" inputmode="numeric" placeholder="例 12000"></div>
+    <label class="clabel">入札価格（税抜）</label>
+    <div class="cinput"><span class="cy">¥</span><input id="cBid" type="number" inputmode="numeric" placeholder="例 5000"></div>
+    <div class="cresult" id="cResult">
+      <div class="cempty">売値と入札価格を入力すると<br>利益を計算します</div>
+    </div>
+    <div class="crev">
+      <div class="gcat">目標利益から逆算</div>
+      <label class="clabel">ほしい利益</label>
+      <div class="cinput"><span class="cy">¥</span><input id="cTarget" type="number" inputmode="numeric" placeholder="例 3000"></div>
+      <div class="crevout" id="cRevOut">売値とほしい利益を入れると、<br>入札の上限（税抜）を表示します</div>
+    </div>
+    <button class="ctable-btn" id="ctableBtn">落札手数料テーブルを見る ▾</button>
+    <div class="ctable" id="ctable" style="display:none">
+      <div class="ctrow"><span>〜10,000円</span><b>500円</b></div>
+      <div class="ctrow"><span>〜49,999円</span><b>1,000円</b></div>
+      <div class="ctrow"><span>〜99,999円</span><b>2,000円</b></div>
+      <div class="ctrow"><span>〜499,999円</span><b>4,000円</b></div>
+      <div class="ctrow"><span>〜999,999円</span><b>8,000円</b></div>
+      <div class="ctrow"><span>1,000,000円〜</span><b>10,000円</b></div>
+      <div class="ctnote">※税抜入札価格で決定。手数料にも消費税10%</div>
+    </div>
+    <div class="cfoot">メルカリ手数料10％＋送料180円／エコ送料0円／消費税10％で計算</div>
+  </aside>
+</div>
+</div>
+<div class="toast" id="toast"></div>
+
+<!-- スマホ専用：利益計算を開くボタン（PCでは非表示） -->
+<button class="calc-fab" id="calcFab" type="button" aria-label="利益計算をひらく"><span class="cf-ic">🧮</span>利益計算</button>
+<div class="calc-backdrop" id="calcBackdrop" aria-hidden="true"></div>
+
+<script>
+const $=s=>document.querySelector(s), $$=s=>document.querySelectorAll(s);
+const yen=n=>n==null?null:n.toLocaleString("ja-JP");
+const esc=s=>(s||"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const safeUrl=u=>/^https?:\/\//i.test(u||"")?u:"#";
+let state={keyword:"",q:"",min:"",max:"",sort:"new"}, debounce=null;
+
+/* ── 認証 ── */
+async function doLogin(){
+  const btn=$("#loginBtn"); $("#gateErr").textContent=""; btn.disabled=true; btn.textContent="確認中…";
+  let r;
+  try{ r=await fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:$("#email").value.trim(),password:$("#pw").value})}).then(x=>x.json()); }
+  catch(e){ r={ok:false,error:"接続エラー"}; }
+  if(r.ok){ $("#pw").value=""; document.body.classList.add("authed"); load(); }
+  else{ $("#gateErr").textContent=r.error||"ログインできませんでした"; btn.disabled=false; btn.textContent="ログインして閲覧"; }
+}
+$("#loginBtn").addEventListener("click",doLogin);
+$("#pw").addEventListener("keydown",e=>{if(e.key==="Enter")doLogin();});
+$("#logoutBtn").addEventListener("click",async()=>{await fetch("/api/logout",{method:"POST"}).catch(()=>{});location.reload();});
+
+/* ── 表示 ── */
+function fmtTime(iso){if(!iso)return "—";const d=new Date(iso);return d.toLocaleString("ja-JP",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});}
+function qs(){const p=new URLSearchParams();if(state.keyword)p.set("keyword",state.keyword);if(state.q)p.set("q",state.q);if(state.min)p.set("min",state.min);if(state.max)p.set("max",state.max);p.set("sort",state.sort);return p.toString();}
+function chips(keywords,counts){
+  const c=$("#chips");
+  if(c.dataset.built==="1"){c.querySelectorAll(".chip[data-kw]").forEach(ch=>{const k=ch.dataset.kw;if(k)ch.querySelector(".n").textContent=counts[k]??0;});return;}
+  const total=Object.values(counts).reduce((a,b)=>a+b,0);
+  let h=`<div class="chip on" data-kw=""><span>すべて</span><span class="n">${total}</span></div>`;
+  for(const k of keywords)h+=`<div class="chip" data-kw="${esc(k)}"><span>${esc(k)}</span><span class="n">${counts[k]??0}</span></div>`;
+  c.innerHTML=h;c.dataset.built="1";
+  c.querySelectorAll(".chip").forEach(ch=>ch.addEventListener("click",()=>{state.keyword=ch.dataset.kw;c.querySelectorAll(".chip").forEach(x=>x.classList.toggle("on",x===ch));load();}));
+}
+async function load(){
+  let res;
+  try{ res=await fetch("/api/items?"+qs()); }catch(e){ $("#stat").textContent="接続エラー"; return; }
+  if(res.status===401){ document.body.classList.remove("authed"); return; }  // セッション切れ→再ログイン
+  const d=await res.json();
+  chips(d.keywords,d.keyword_counts||{});
+  const w=$("#warn");if(d.warning){w.textContent="⚠ "+d.warning;w.style.display="block";}else w.style.display="none";
+  $("#stat").innerHTML=`表示 <b>${d.shown}</b> / 全 <b>${d.total}</b> 件<br>更新 ${fmtTime(d.last_run)}`;
+  const g=$("#grid");g.innerHTML="";$("#empty").style.display=d.items.length?"none":"block";
+  const frag=document.createDocumentFragment();
+  for(const it of d.items){
+    const price=yen(it.current_price);
+    const card=document.createElement("div");card.className="card";
+    card.innerHTML=`
+      <a class="thumb" href="${esc(safeUrl(it.url))}" target="_blank" rel="noopener">
+        ${it.image?`<img loading="lazy" src="${esc(safeUrl(it.image))}" alt="">`:`<div class="noimg">画像なし</div>`}
+        ${it.rank?`<span class="rank">ランク ${esc(it.rank)}</span>`:``}
+        <span class="tag">${esc(it.keyword)}</span>
+      </a>
+      <div class="body">
+        ${it.brand?`<div class="bd">${esc(it.brand)}</div>`:``}
+        <div class="ttl">${esc(it.title)||"（タイトル取得中）"}</div>
+        <div class="pr">${price?`<span class="lb">落札</span><span class="now">¥${price}</span>`:`<span class="na">価格不明</span>`}</div>
+        <div class="meta">${it.category?`<span class="mt">${esc(it.category)}</span>`:``}${it.sold_date?`<span class="mt">${esc(it.sold_date)} 落札</span>`:``}</div>
+        <div class="act"><a href="${esc(safeUrl(it.url))}" target="_blank" rel="noopener">落札相場の詳細を見る</a></div>
+      </div>`;
+    frag.appendChild(card);
+  }
+  g.appendChild(frag);
+}
+function toast(m){const t=$("#toast");t.textContent=m;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2600);}
+function deb(){clearTimeout(debounce);debounce=setTimeout(load,250);}
+$("#fQuery").addEventListener("input",e=>{state.q=e.target.value.trim();deb();});
+$("#fMin").addEventListener("input",e=>{state.min=e.target.value;deb();});
+$("#fMax").addEventListener("input",e=>{state.max=e.target.value;deb();});
+$$("#seg button").forEach(b=>b.addEventListener("click",()=>{state.sort=b.dataset.sort;$$("#seg button").forEach(x=>x.classList.toggle("on",x===b));load();}));
+
+/* ── 利益計算（エコリング：段階制落札手数料＋消費税10%、メルカリ手数料10%＋送料180円） ── */
+/* yen() は既存定義(上部)を流用 */
+function ecoFee(bid){                       // 税抜入札価格 → 落札手数料（税抜）
+  if(bid<=10000)return 500;
+  if(bid<=49999)return 1000;
+  if(bid<=99999)return 2000;
+  if(bid<=499999)return 4000;
+  if(bid<=999999)return 8000;
+  return 10000;
+}
+function mercariProceeds(sell){return sell-Math.floor(sell*0.1)-180;}   // メルカリ手取り
+function ecoPay(bid){const fee=ecoFee(bid);return {fee,tax:Math.round((bid+fee)*0.1),total:Math.round((bid+fee)*1.1)};}
+function calcEco(){
+  const sell=parseInt($("#cSell").value,10), bid=parseInt($("#cBid").value,10);
+  const box=$("#cResult");
+  if(!(sell>0)||!(bid>=0)||isNaN(bid)){box.innerHTML='<div class="cempty">売値と入札価格を入力すると<br>利益を計算します</div>';return;}
+  const {fee,tax,total}=ecoPay(bid), proceeds=mercariProceeds(sell), profit=proceeds-total;
+  const rate=sell>0?Math.round(profit/sell*1000)/10:0;
+  box.innerHTML=`
+    <div class="crow"><span>入札価格(税抜)</span><b>¥${yen(bid)}</b></div>
+    <div class="crow"><span>落札手数料(税抜)</span><b>¥${yen(fee)}</b></div>
+    <div class="crow"><span>消費税(10%)</span><b>¥${yen(tax)}</b></div>
+    <div class="crow minus"><span>エコ支払総額(税込)</span><b>−¥${yen(total)}</b></div>
+    <div class="crow"><span>メルカリ手取り</span><b>¥${yen(proceeds)}</b></div>
+    <div class="cprofit ${profit<0?'loss':''}">
+      <div class="pl">${profit<0?'赤字':'利益（粗利）'}</div>
+      <div class="pv">${profit<0?'−':''}¥${yen(Math.abs(profit))}</div>
+      <div class="pr">利益率 ${rate}%</div>
+    </div>`;
+}
+function ecoMaxBid(sell,target){            // 目標利益を確保できる最大入札（税抜・100円単位）
+  const maxBudget=mercariProceeds(sell)-target;   // エコ支払総額(税込)の上限
+  if(maxBudget<=0)return null;
+  const tiers=[[0,10000,500],[10001,49999,1000],[50000,99999,2000],[100000,499999,4000],[500000,999999,8000],[1000000,Infinity,10000]];
+  let bestBid=-1,bestFee=0;
+  for(const [min,max,fee] of tiers){
+    const feeTaxIncl=fee*1.1;
+    if(feeTaxIncl>=maxBudget)continue;
+    const xMaxFloat=(maxBudget-feeTaxIncl)/1.1;
+    const xClamped=Math.min(xMaxFloat, max===Infinity?xMaxFloat:max);
+    if(xClamped<min)continue;
+    const x=Math.floor(xClamped/100)*100;
+    if(x<min)continue;
+    if((x+fee)*11<=Math.floor(maxBudget*10) && x>bestBid){bestBid=x;bestFee=fee;}
+  }
+  if(bestBid<0)return null;
+  return {bid:bestBid,fee:bestFee,total:Math.round(bestBid*1.1+bestFee*1.1)};
+}
+function calcEcoReverse(){
+  const sell=parseInt($("#cSell").value,10), target=parseInt($("#cTarget").value,10);
+  const out=$("#cRevOut");
+  if(!(sell>0)||!(target>=0)||isNaN(target)){out.className="crevout";out.innerHTML="売値とほしい利益を入れると、<br>入札の上限（税抜）を表示します";return;}
+  const r=ecoMaxBid(sell,target);
+  if(!r){out.className="crevout";out.innerHTML=`この売値では利益¥${yen(target)}は<br><b>確保できません</b>（手取り¥${yen(mercariProceeds(sell))}）`;return;}
+  out.className="crevout has";
+  out.innerHTML=`入札価格（税抜）は<br><span class="bigbid">¥${yen(r.bid)}</span> まで<div style="font-size:11px;color:var(--sub);margin-top:4px">支払総額(税込) ¥${yen(r.total)}／この額以下で落札すれば利益¥${yen(target)}以上</div>`;
+}
+function calcAllEco(){calcEco();calcEcoReverse();}
+["#cSell","#cBid","#cTarget"].forEach(s=>$(s)&&$(s).addEventListener("input",calcAllEco));
+$("#ctableBtn")&&$("#ctableBtn").addEventListener("click",()=>{const t=$("#ctable");t.style.display=t.style.display==="none"?"block":"none";});
+$("#reloadBtn").addEventListener("click",()=>load());
+
+/* ── スマホ：利益計算ボトムシートの開閉（PCでは要素が非表示なので無影響） ── */
+const openCalc=()=>document.body.classList.add("calc-open");
+const closeCalc=()=>document.body.classList.remove("calc-open");
+$("#calcFab")&&$("#calcFab").addEventListener("click",openCalc);
+$("#calcBackdrop")&&$("#calcBackdrop").addEventListener("click",closeCalc);
+$("#calcClose")&&$("#calcClose").addEventListener("click",closeCalc);
+document.addEventListener("keydown",e=>{if(e.key==="Escape")closeCalc();});
+
+// 既にログイン済み（有効セッション）なら直接表示
+(async()=>{
+  try{ const m=await fetch("/api/me").then(r=>r.json()); if(m.authed){ document.body.classList.add("authed"); load(); return; } }catch(e){}
+  $("#email").focus();
+})();
+setInterval(()=>{if(document.body.classList.contains("authed")&&!document.hidden)load();},60000);
+</script>
+</body>
+</html>

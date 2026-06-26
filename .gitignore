@@ -1,0 +1,28 @@
+# 秘密情報（絶対に公開しない）
+config.txt
+session_cookies.txt
+*.cookies
+*.secret
+
+# データベース・ログ
+db.sqlite
+db.sqlite-shm
+db.sqlite-wal
+*.sqlite
+*.sqlite-*
+logs_*.txt
+*.log
+
+# スクレイピング取得データ（個人情報を含む可能性あり）
+eco_sample.html
+eco_market_sample.html
+recon/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# macOS
+.DS_Store
