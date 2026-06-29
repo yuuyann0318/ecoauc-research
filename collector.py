@@ -710,7 +710,7 @@ def upsert(conn, item, now_iso):
                 :auction_round, :lane, :lot_position, :my_prebid,
                 :now, :now)
         ON CONFLICT(id) DO UPDATE SET
-            title=excluded.title, image=excluded.image,
+            title=excluded.title, url=excluded.url, image=excluded.image,
             current_price=excluded.current_price, keyword=excluded.keyword,
             brand=excluded.brand, rank=excluded.rank, category=excluded.category,
             shape=excluded.shape, sold_date=excluded.sold_date, auction=excluded.auction,
