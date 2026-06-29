@@ -136,6 +136,13 @@ class Handler(BaseHTTPRequestHandler):
                 params = urllib.parse.parse_qs(parsed.query)
                 self._send(200, server.query_items(params))
                 return
+            if path == "/api/rotation":
+                # /api/items と同じ認証方針。ローカルJSONを読むだけ（スクレイパは呼ばない）。
+                if not self._authed():
+                    self._send(401, {"error": "unauthorized"})
+                    return
+                self._send(200, server.load_rotation())
+                return
             self._send(404, {"error": "not found"})
         except Exception:  # noqa: BLE001
             print("GETエラー:", traceback.format_exc())

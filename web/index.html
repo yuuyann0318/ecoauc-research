@@ -192,6 +192,24 @@
   .act .calc-link:hover{background:rgba(22,50,42,.06)}
   .act a{display:block;text-align:center;font-size:12px;font-weight:700;padding:10px 4px;border-radius:11px;text-decoration:none;background:var(--accent);color:#fff;transition:.15s}
   .act a:hover{opacity:.88}
+  /* メルカリ連携リンク（売り切れ＝売れ行き / 販売中＝ライバル） */
+  .act .merc{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+  .act .merc a{display:block;text-align:center;font-size:11px;font-weight:700;padding:8px 3px;border-radius:10px;text-decoration:none;background:#fff;line-height:1.25;transition:.15s}
+  .act .merc a span{display:block;font-size:9px;font-weight:600;opacity:.72;margin-top:1px}
+  .act .merc a.merc-sold{border:1px solid rgba(10,125,75,.34);color:var(--deal)}
+  .act .merc a.merc-sold:hover{background:rgba(10,125,75,.08)}
+  .act .merc a.merc-live{border:1px solid var(--line);color:var(--sub)}
+  .act .merc a.merc-live:hover{border-color:#c8ccc9;color:var(--ink)}
+  /* 回転率（ローカル /api/rotation がある時だけ表示） */
+  .rot{margin-top:2px;padding:8px 10px;background:var(--soft);border-radius:10px;display:flex;flex-direction:column;gap:4px}
+  .rot-top{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  .rot-rate{font-size:11px;font-weight:800;padding:2px 8px;border-radius:7px;line-height:1.3;white-space:nowrap}
+  .rot-hi{background:rgba(10,125,75,.14);color:var(--deal)}
+  .rot-mid{background:rgba(180,130,20,.16);color:#8a5300}
+  .rot-lo{background:rgba(192,57,43,.12);color:var(--price)}
+  .rot-sub{font-size:10.5px;color:var(--sub);font-weight:700}
+  .rot-line{font-size:10.5px;color:var(--ink);font-weight:600}
+  .rot-note{font-size:9px;color:var(--sub);line-height:1.45}
   .empty{text-align:center;color:var(--sub);padding:70px 20px}
   .empty .big{font-size:15px;font-weight:600;color:var(--ink);margin-bottom:6px}
   .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(10px);background:var(--accent);color:#fff;font-size:13px;font-weight:600;padding:12px 22px;border-radius:999px;box-shadow:var(--shadow-h);opacity:0;pointer-events:none;transition:.28s;z-index:60}
@@ -475,8 +493,39 @@ const $=s=>document.querySelector(s), $$=s=>document.querySelectorAll(s);
 const yen=n=>(n==null||isNaN(n))?"—":Math.round(n).toLocaleString("ja-JP");
 const esc=s=>(s||"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const safeUrl=u=>/^https?:\/\//i.test(u||"")?u:"#";
+
+// メルカリ検索URLを組み立てる（URL生成のみ・スクレイピング無し）。
+//  line: SOBAエントリ {en,jp,cat,price}, status: "sold_out"(売り切れ) / "on_sale"(販売中)
+//  相場(price)があれば ±20% の価格帯フィルタも付ける。
+function mercariUrl(line, status){
+  if(!line) return "#";
+  const kw = `ティファニー ${line.jp||""} ${CAT_LABEL[line.cat]||""}`.replace(/\s+/g," ").trim();
+  const r = sobaRange(line.price);
+  let u = `https://jp.mercari.com/search?keyword=${encodeURIComponent(kw)}&status=${encodeURIComponent(status)}`;
+  if(r){
+    const lo = Math.floor(r.min*0.8), hi = Math.ceil(r.max*1.2);
+    u += `&price_min=${lo}&price_max=${hi}`;
+  }
+  u += `&order=desc&sort=created_time`;
+  return u;
+}
+
 let state={keyword:"",q:"",min:"",max:"",sort:"new"}, debounce=null;
 let ITEMS=[];
+// 回転率データ（ローカル集計の /api/rotation）。未配信なら {} のまま＝何も出さない。
+let ROT={}, rotLoaded=false;
+async function ensureRot(){
+  if(rotLoaded) return;            // 初回1回だけ取得（商品再読込ごとには叩かない）
+  rotLoaded=true;
+  try{
+    const r=await fetch("/api/rotation");
+    if(!r.ok) return;              // 未配信(404等)はグレースフルに無視（ROT={}のまま）
+    const d=await r.json();
+    if(d && typeof d==="object" && !Array.isArray(d)){
+      ROT=(d.lines && typeof d.lines==="object")?d.lines:d;   // {lines:{...}} でも 生Map でも可
+    }
+  }catch(e){ /* 取得失敗はグレースフルに無視 */ }
+}
 
 /* ── 認証（現行のまま維持） ── */
 async function doLogin(){
@@ -562,6 +611,52 @@ function showStart(it){
   return null;
 }
 
+const _isNum=v=>typeof v==="number" && isFinite(v);
+
+// Part A：メルカリ手動リンク（売り切れ＝売れ行き / 販売中＝ライバル）。soba が無ければ何も出さない。
+function mercLinks(soba){
+  if(!soba) return "";
+  return `<div class="merc">`
+    + `<a class="merc-sold" href="${esc(safeUrl(mercariUrl(soba,"sold_out")))}" target="_blank" rel="noopener">メルカリ売れ行き<span>売り切れ</span></a>`
+    + `<a class="merc-live" href="${esc(safeUrl(mercariUrl(soba,"on_sale")))}" target="_blank" rel="noopener">ライバル<span>販売中</span></a>`
+    + `</div>`;
+}
+
+// Part B：回転率6点セット。soba があり ROT[soba.en] が存在する時だけ表示（無ければ "" ＝グレースフル劣化）。
+//  捏造防止：ROTに無い／数値が無い項目は出さない。method別に文言を厳密に出し分ける。
+function rotationHtml(soba){
+  if(!soba) return "";
+  const r = ROT ? ROT[soba.en] : null;
+  if(!r || typeof r!=="object") return "";
+
+  // ① 回転率（str%）色分け ≥60緑/30〜60黄/<30赤
+  let rateHtml="";
+  if(_isNum(r.str)){
+    const s=Math.round(r.str);
+    const cls = s>=60 ? "rot-hi" : (s>=30 ? "rot-mid" : "rot-lo");
+    rateHtml=`<span class="rot-rate ${cls}">回転 ${s}%</span>`;
+  }
+  // ② 売り切れ表示数 / 販売中(ライバル)
+  const counts=[];
+  if(_isNum(r.sold)) counts.push(`売切 ${r.sold}`);
+  if(_isNum(r.active)) counts.push(`販売中 ${r.active}`);
+  const countHtml = counts.length ? `<span class="rot-sub">${counts.join(" / ")}</span>` : "";
+  // ③④ 約N日で1個（days_per が正の数のときだけ）＋ 信頼度
+  const lineParts=[];
+  if(r.method==="30day" && _isNum(r.days_per) && r.days_per>0) lineParts.push(`約 ${Math.round(r.days_per)} 日で1個`);
+  if(r.conf!=null && r.conf!=="") lineParts.push(`信頼度 ${esc(String(r.conf))}`);
+  const lineHtml = lineParts.length ? `<div class="rot-line">${lineParts.join(" ・ ")}</div>` : "";
+  // ⑤⑥ method別 但し書き ＋ 基準日
+  let note="";
+  if(r.method==="ratio") note="相対の目安（月販は未確定）・";          // 「月販」と断定しない
+  else if(r.method==="30day" && _isNum(r.sold)) note=`直近30日 約${r.sold}件・`;
+  note+="ライン平均の目安・個体差あり";
+  if(r.asOf) note+=`（基準日 ${esc(String(r.asOf))}）`;
+
+  const topHtml=(rateHtml||countHtml) ? `<div class="rot-top">${rateHtml}${countHtml}</div>` : "";
+  return `<div class="rot">${topHtml}${lineHtml}<div class="rot-note">${note}</div></div>`;
+}
+
 async function load(){
   let res;
   try{ res=await fetch("/api/items?"+qs()); }catch(e){ $("#stat").textContent="接続エラー"; return; }
@@ -571,6 +666,7 @@ async function load(){
   const w=$("#warn");if(d.warning){w.textContent="⚠ "+d.warning;w.style.display="block";}else w.style.display="none";
   $("#stat").innerHTML=`表示 <b>${d.shown}</b> / 全 <b>${d.total}</b> 件<br>更新 ${fmtTime(d.last_run)}`;
   ITEMS=d.items||[];
+  await ensureRot();                 // 回転率データ（未配信なら ROT={} のまま＝何も出さない）
   const g=$("#grid");g.innerHTML="";$("#empty").style.display=ITEMS.length?"none":"block";
   const frag=document.createDocumentFragment();
 
@@ -621,9 +717,11 @@ async function load(){
         ${priceHtml}
         ${sig}
         ${meta.length?`<div class="meta">${meta.join("")}</div>`:``}
+        ${rotationHtml(soba)}
         <div class="act">
           <button class="calc-link" type="button" data-idx="${idx}">この商品で利益計算</button>
           <a href="${esc(safeUrl(it.url))}" target="_blank" rel="noopener">エコリングで見る・入札</a>
+          ${mercLinks(soba)}
         </div>
       </div>`;
     frag.appendChild(card);

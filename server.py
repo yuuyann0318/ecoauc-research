@@ -19,6 +19,7 @@ import collector
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(BASE_DIR, "web")
+ROTATION_JSON = os.path.join(BASE_DIR, "mercari_rotation.json")
 PORT = 8781
 JST = timezone(timedelta(hours=9))
 AUTO_REFRESH_MINUTES = 60
@@ -108,6 +109,18 @@ def _query_items(conn, params):
     return resp
 
 
+def load_rotation():
+    """ローカルに mercari_rotation.json があれば読んで返す。無ければ {}。
+
+    スクレイパ(mercari_rotation.py)は一切呼ばない。既存JSONを読むだけの無害な配信。
+    """
+    try:
+        with open(ROTATION_JSON, encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -138,6 +151,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/status":
                 self._send(200, {"running": _state["running"], "log": _state["log"], "last": _state["last"]})
+                return
+            if parsed.path == "/api/rotation":
+                # ローカルに mercari_rotation.json があれば返す。無ければ {}。
+                self._send(200, load_rotation())
                 return
             # ローカル専用(127.0.0.1)サーバーのため認証は不要。常にログイン済みとして扱う。
             if parsed.path == "/api/me":

@@ -30,3 +30,9 @@ venv/
 # 追加: 全スクレイピングサンプル・バックアップを除外
 eco_*sample*.html
 *.bak
+*.bak*
+
+# メルカリ回転（ローカル限定・公開しない）
+mercari_rotation.py
+mercari_rotation.json
+requirements-mercari.txt
