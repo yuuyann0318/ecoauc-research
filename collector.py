@@ -59,6 +59,9 @@ _VALID_ID = re.compile(r"^\d+$")
 # 落札相場の検索はスペース=OR（語のどれかを含む全件）かつ他ブランド混在のため、
 # 収集側で「ブランド一致＋商品名一致」のAND絞り込みを行う（2026/6/17）。
 PAGES_PER_KEYWORD = 4  # OR検索で関連品が散るため複数ページ集める
+# 1ページあたりの取得上限（fetch_search の limit と一致させること）。生カード数が
+# この値未満なら「そのページが最後＝これ以上ページは無い」と判定できる（鮮度掃除の安全条件）。
+PAGE_LIMIT = 50
 
 # キーワード先頭のブランド語 → 相場タイトル/ブランド欄での表記ゆれ
 BRAND_ALIAS = {
@@ -336,11 +339,11 @@ def fetch_search(keyword, page=1):
     if SOURCE == "buynow":
         # 即決一覧（グリッド表示・新着順）。空文字パラメータも本家の挙動に合わせて付与。
         params = {
-            "q": keyword, "limit": 50, "tableType": "grid", "sortKey": 1,
+            "q": keyword, "limit": PAGE_LIMIT, "tableType": "grid", "sortKey": 1,
             "master_item_ranks": "", "auction_lane_id": "",
         }
     else:
-        params = {"q": keyword, "limit": 50}
+        params = {"q": keyword, "limit": PAGE_LIMIT}
     if page > 1:
         params["page"] = page
     url = SEARCH_URL + "?" + urllib.parse.urlencode(params)
@@ -758,6 +761,9 @@ def collect(pages=PAGES_PER_KEYWORD, log=print):
         kw_count = 0
         raw_count = 0
         kw_ok = True   # このキーワードの試行ページが全てエラーなく取得できたか
+        # そのキーワードの結果を最後まで見切ったか（=これ以上ページが無いと確信できる）。
+        # 鮮度掃除はこれが True のときだけ対象にする（ページ上限打ち切りでの過剰削除を防止）。
+        fully_scanned = False
         for page in range(1, pages + 1):
             try:
                 _, page_html = fetch_search(kw, page=page)
@@ -766,10 +772,14 @@ def collect(pages=PAGES_PER_KEYWORD, log=print):
                 log(f"  取得失敗: {kw} (p{page}) -> {e}")
                 kw_ok = False   # 途中ページ失敗 → 鮮度掃除の対象から外す（誤削除防止）
                 break
+            # SOLD除外前の「生カード数」を parse_buynow と同じ2段アンカーで数える
+            # （厳密→0ならゆるい方）。SOLDスキップで減った後の件数では判定しない。
+            page_cards = len(re.findall(
+                r'<div class="col-sm-6 col-md-4 col-lg-3 mb-grid-card', page_html)) \
+                or len(re.findall(
+                    r'<div class="col-sm-6 col-md-4 col-lg-3', page_html))
             items = parse_search(page_html, kw, dump=first)
             first = False
-            if not items:
-                break
             raw_count += len(items)
             # ブランド＋商品名でAND絞り込み（OR検索の誤マッチ/他ブランドを除外）
             for it in items:
@@ -779,9 +789,19 @@ def collect(pages=PAGES_PER_KEYWORD, log=print):
                 kw_count += 1
                 total += 1
             conn.commit()
+            # 生カード数が上限(PAGE_LIMIT)未満（0=空ページ含む）→ このページが最後＝
+            # これ以上ページは無い → 完全スキャン確定。上限ちょうど（満杯）なら続きがあり
+            # 得るので次ページへ。満杯のまま for を回り切った場合は fully_scanned=False の
+            # まま＝打ち切り扱いとなり、鮮度掃除の対象に入れない（過剰削除を防ぐ）。
+            if page_cards < PAGE_LIMIT:
+                fully_scanned = True
+                break
             time.sleep(POLITE_DELAY)
-        if kw_ok:
+        # 取得が全ページ正常で、かつ結果を最後まで見切れた場合のみ鮮度掃除の対象にする。
+        if kw_ok and fully_scanned:
             fresh_keywords.append(kw)
+        elif kw_ok:
+            log(f"  「{kw}」は{pages}ページを超えるため鮮度掃除をスキップ（3日掃除で対応）")
         log(f"  「{kw}」 {kw_count}件（候補{raw_count}件から絞込）")
 
     # ログインは通ったのに解析0件＝一覧ページの構造に解析を合わせる必要あり
