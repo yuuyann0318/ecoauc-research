@@ -507,7 +507,15 @@ def parse_buynow(page_html, keyword, dump=False):
         except Exception:  # noqa: BLE001
             pass
 
-        url = BASE_URL + "/client/auction-items/view/" + aid
+        # 即決カードの実 href（/client/auction-items/view/{id}/BuyNow?... ）を採用し、
+        # BuyNow ルート/クエリ（sortKey/limit 等）を保持する。html.unescape で &amp; を復元。
+        # 取れなければ従来どおり ID から URL を再構築してフォールバックする。
+        try:
+            hm = re.search(r'href="(/client/auction-items/view/\d+[^"]*)"', card)
+            url = (BASE_URL + html.unescape(hm.group(1))) if hm \
+                else (BASE_URL + "/client/auction-items/view/" + aid)
+        except Exception:  # noqa: BLE001
+            url = BASE_URL + "/client/auction-items/view/" + aid
 
         # ブランド
         try:
@@ -743,15 +751,20 @@ def collect(pages=PAGES_PER_KEYWORD, log=print):
     total = 0
     pages_fetched = 0
     first = True
+    # 鮮度掃除（buy-now）の対象キーワード＝今回そのキーワードの全ページを
+    # エラーなく取得できたものだけ。途中取得失敗のキーワードは誤削除を防ぐため除外。
+    fresh_keywords = []
     for kw in keywords:
         kw_count = 0
         raw_count = 0
+        kw_ok = True   # このキーワードの試行ページが全てエラーなく取得できたか
         for page in range(1, pages + 1):
             try:
                 _, page_html = fetch_search(kw, page=page)
                 pages_fetched += 1
             except Exception as e:  # noqa: BLE001
                 log(f"  取得失敗: {kw} (p{page}) -> {e}")
+                kw_ok = False   # 途中ページ失敗 → 鮮度掃除の対象から外す（誤削除防止）
                 break
             items = parse_search(page_html, kw, dump=first)
             first = False
@@ -767,6 +780,8 @@ def collect(pages=PAGES_PER_KEYWORD, log=print):
                 total += 1
             conn.commit()
             time.sleep(POLITE_DELAY)
+        if kw_ok:
+            fresh_keywords.append(kw)
         log(f"  「{kw}」 {kw_count}件（候補{raw_count}件から絞込）")
 
     # ログインは通ったのに解析0件＝一覧ページの構造に解析を合わせる必要あり
@@ -793,7 +808,21 @@ def collect(pages=PAGES_PER_KEYWORD, log=print):
             "AND (auction_round IS NULL OR auction_round='') "
             "AND sold_date IS NOT NULL AND sold_date<>''"
         )
-    # 3日見かけない商品は掃除
+    # 即決(buy-now)の在庫鮮度：取得が正常完了したキーワードに限り、今回の収集で
+    # 再確認されなかった行（last_seen が今回のタイムスタンプ now_iso と異なる行）を
+    # 消す。売却済み・一覧から外れた即決商品が最大3日ダッシュボードに残るのを防ぐ。
+    # 取得失敗キーワードは fresh_keywords に入れていないので消さない（一時的失敗で
+    # データを失わないため）。market では適用しない（従来の3日ロジックのみ）。
+    # warning が立つ＝解析が全滅（site構造変化/セッション切れ等で parse 0件）。その
+    # ときは fetch 成功でも全行が last_seen 不一致になり全消ししてしまうため、鮮度掃除は
+    # スキップして安全側の3日掃除に委ねる（一時的なサイト変化でデータを失わない）。
+    if SOURCE == "buynow" and not warning:
+        for kw in fresh_keywords:
+            conn.execute(
+                "DELETE FROM items WHERE keyword=? AND last_seen<>?",
+                (kw, now_iso),
+            )
+    # 3日見かけない商品は掃除（buy-nowでは上の鮮度掃除でほぼ発火しないが保険として維持）
     seen_cut = (now - timedelta(days=3)).isoformat()
     conn.execute("DELETE FROM items WHERE last_seen < ?", (seen_cut,))
     set_meta(conn, "last_run", now_iso)
