@@ -139,13 +139,37 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/status":
                 self._send(200, {"running": _state["running"], "log": _state["log"], "last": _state["last"]})
                 return
+            # ローカル専用(127.0.0.1)サーバーのため認証は不要。常にログイン済みとして扱う。
+            if parsed.path == "/api/me":
+                self._send(200, {"authed": True})
+                return
             self._send(404, {"error": "not found"})
         except Exception:  # noqa: BLE001
             self._send(500, {"error": "internal", "detail": traceback.format_exc(limit=2)})
 
+    def _drain_body(self):
+        # POSTボディは読み捨て（ローカル専用のため中身は使わない）。
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+            if n > 0:
+                self.rfile.read(n)
+        except Exception:  # noqa: BLE001
+            pass
+
     def do_POST(self):
         try:
-            if urllib.parse.urlparse(self.path).path == "/api/refresh":
+            path = urllib.parse.urlparse(self.path).path
+            # ローカル専用(127.0.0.1)サーバーのため認証は素通し。
+            # 公開用 auth_server.py(:8782) 側で本物のゲートを担保している。
+            if path == "/api/login":
+                self._drain_body()           # bodyのメール/パスワードは読み捨て
+                self._send(200, {"ok": True})
+                return
+            if path == "/api/logout":
+                self._drain_body()
+                self._send(200, {"ok": True})
+                return
+            if path == "/api/refresh":
                 if _state["running"]:
                     self._send(200, {"started": False, "reason": "already_running"})
                     return

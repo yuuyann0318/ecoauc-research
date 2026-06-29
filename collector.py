@@ -28,14 +28,25 @@ DB_PATH = os.path.join(BASE_DIR, "db.sqlite")
 KEYWORDS_PATH = os.path.join(BASE_DIR, "keywords.txt")
 CONFIG_PATH = os.path.join(BASE_DIR, "config.txt")
 COOKIE_PATH = os.path.join(BASE_DIR, "session_cookies.txt")
+# 落札相場用サンプル（互換のため残す）と即決用サンプルを分ける
 SAMPLE_PATH = os.path.join(BASE_DIR, "eco_sample.html")
+BUYNOW_SAMPLE_PATH = os.path.join(BASE_DIR, "eco_buynow_sample.html")
 
 BASE_URL = "https://www.ecoauc.com"
 LOGIN_URL = f"{BASE_URL}/client/users/sign_in"
 POST_LOGIN_URL = f"{BASE_URL}/client/users/post-sign-in"
-# 落札相場（サーバー描画・キーワード検索q・常時データあり）を一次ソースにする。
-# 実ログイン後DOMを確認して市場相場ページをパースする方針（2026/6/17）。
-SEARCH_URL = f"{BASE_URL}/client/market-prices"
+
+# データ源の切替フラグ。
+#   "buynow" … 入札受付中の即決商品（/client/buy-now）を一次ソースにする（既定・2026/6/29）。
+#   "market" … 落札相場（過去・/client/market-prices）をパースする（フォールバック）。
+# どちらもサーバー描画HTML＋グリッド構造で、正規表現パースと収集ループは共通。
+SOURCE = "buynow"
+
+MARKET_URL = f"{BASE_URL}/client/market-prices"
+BUYNOW_URL = f"{BASE_URL}/client/buy-now"
+SEARCH_URL = BUYNOW_URL if SOURCE == "buynow" else MARKET_URL
+# 実際に dump で書き出すサンプルHTMLのパス（ソースで切替）
+ACTIVE_SAMPLE_PATH = BUYNOW_SAMPLE_PATH if SOURCE == "buynow" else SAMPLE_PATH
 
 JST = timezone(timedelta(hours=9))
 USER_AGENT = (
@@ -181,7 +192,8 @@ def is_logged_in_html(page_html, final_url):
     markers = (
         "sign_out", "sign-out", "ログアウト", "/client/items/",
         "/client/mylist", "/client/bids", "/client/auctions",
-        "/client/market-prices", "/client/buy-now", "マイリスト",
+        "/client/market-prices", "/client/buy-now",
+        "/client/auction-items/", "マイリスト",
     )
     if any(m in page_html for m in markers):
         return True
@@ -277,17 +289,33 @@ def init_db():
             shape         TEXT,
             sold_date     TEXT,
             auction       TEXT,
+            start_price   INTEGER,
+            buy_now_price INTEGER,
+            unit_price    INTEGER,
+            start_at      TEXT,
+            auction_round TEXT,
+            lane          TEXT,
+            lot_position  TEXT,
+            my_prebid     INTEGER,
             first_seen    TEXT,
             last_seen     TEXT
         )
         """
     )
     conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
-    # 旧スキーマからのマイグレーション（不足列を追加）
+    # 旧スキーマからのマイグレーション（不足列を型付きで追加）。
+    # 既存の落札相場用カラムに加え、即決(buy-now)用カラムを足す（2026/6/29）。
+    migrations = {
+        "brand": "TEXT", "rank": "TEXT", "category": "TEXT", "shape": "TEXT",
+        "sold_date": "TEXT", "auction": "TEXT",
+        "start_price": "INTEGER", "buy_now_price": "INTEGER",
+        "unit_price": "INTEGER", "start_at": "TEXT", "auction_round": "TEXT",
+        "lane": "TEXT", "lot_position": "TEXT", "my_prebid": "INTEGER",
+    }
     cols = {r[1] for r in conn.execute("PRAGMA table_info(items)")}
-    for col in ("brand", "rank", "category", "shape", "sold_date", "auction"):
+    for col, typ in migrations.items():
         if col not in cols:
-            conn.execute(f"ALTER TABLE items ADD COLUMN {col} TEXT")
+            conn.execute(f"ALTER TABLE items ADD COLUMN {col} {typ}")
     conn.commit()
     conn.close()
 
@@ -304,7 +332,15 @@ def set_meta(conn, key, value):
 # 検索・解析
 # ----------------------------------------------------------------------
 def fetch_search(keyword, page=1):
-    params = {"q": keyword, "limit": 50}
+    """一覧ページを取得する。SOURCE により URL とクエリ条件を切り替える。"""
+    if SOURCE == "buynow":
+        # 即決一覧（グリッド表示・新着順）。空文字パラメータも本家の挙動に合わせて付与。
+        params = {
+            "q": keyword, "limit": 50, "tableType": "grid", "sortKey": 1,
+            "master_item_ranks": "", "auction_lane_id": "",
+        }
+    else:
+        params = {"q": keyword, "limit": 50}
     if page > 1:
         params["page"] = page
     url = SEARCH_URL + "?" + urllib.parse.urlencode(params)
@@ -322,21 +358,24 @@ def _card_field(card, pattern, group=1, unescape=True):
     return re.sub(r"\s+", " ", val).strip()
 
 
-def _nearest(pattern, text, center, span=1600):
-    """center位置の周辺windowから pattern を探す（最も近いものを返す）。"""
-    lo = max(0, center - span)
-    hi = min(len(text), center + span)
-    window = text[lo:hi]
-    m = re.search(pattern, window)
-    return m
-
-
 def parse_search(page_html, keyword, dump=False):
+    """SOURCE に応じて即決(parse_buynow)/落札相場(parse_market_prices)へ振り分ける。
+
+    既定は即決(buy-now)。SOURCE="market" にすると落札相場パーサに切り替わる。
+    収集ループ(collect)からはこの関数だけを呼べばよい。
+    """
+    if SOURCE == "buynow":
+        return parse_buynow(page_html, keyword, dump=dump)
+    return parse_market_prices(page_html, keyword, dump=dump)
+
+
+def parse_market_prices(page_html, keyword, dump=False):
     """エコリングの落札相場（/client/market-prices）から商品カードを抽出する。
 
     実ログイン後のDOMを確認して構造ベースで解析（2026/6/17）。1カードは
     `<div class="col-sm-6 col-md-4 col-lg-3"> ... <a href=".../view/ID"> ... </a></div>`。
     取得項目: ブランド/落札日/タイトル/ランク/カテゴリ/形状/落札価格/画像/開催回。
+    ※即決ソースへ切替後はフォールバックとして温存（2026/6/29）。
     """
     if dump:
         try:
@@ -409,26 +448,271 @@ def parse_search(page_html, keyword, dump=False):
     return items
 
 
+def _to_int(s):
+    """カンマ区切りの金額文字列を int に。数値が無ければ None。"""
+    if s is None:
+        return None
+    try:
+        return int(str(s).replace(",", "").strip())
+    except (ValueError, AttributeError):
+        return None
+
+
+def parse_buynow(page_html, keyword, dump=False):
+    """エコリングの即決一覧（/client/buy-now・入札受付中）から商品カードを抽出する。
+
+    実HTML(recon/buy_now.html)で構造を確認済み（2026/6/29）。1カードは
+    `<div class="col-sm-6 col-md-4 col-lg-3 mb-grid-card"> ... </div>`。
+    取得項目: ブランド/タイトル/画像/即決価格/開始価格/入札単位/ランク/出品順位/
+    開催回/開始日時/レーン名/事前入札額(あなたの入札額)。
+    売却済み(SOLD)のカードは収集対象外としてスキップする。
+    各フィールドは取得失敗時に None または "" を入れ、1枚の失敗で全体を落とさない。
+    """
+    if dump:
+        try:
+            with open(BUYNOW_SAMPLE_PATH, "w", encoding="utf-8") as f:
+                f.write(page_html)
+        except Exception:  # noqa: BLE001
+            pass
+
+    # グリッドの各カードに分割。即決カードは `... mb-grid-card"` クラスを持つので、
+    # まず実クラスに合わせた厳密なアンカーで切る（最後のカードがページ末尾のモーダル塊を
+    # 飲み込むのを防ぐ）。0件のときだけ、従来のゆるいアンカーへフォールバックする
+    # （将来サイトのclassが変わってもグリッドを拾えるように）。
+    starts = [m.start() for m in re.finditer(
+        r'<div class="col-sm-6 col-md-4 col-lg-3 mb-grid-card', page_html)]
+    if not starts:
+        starts = [m.start() for m in re.finditer(
+            r'<div class="col-sm-6 col-md-4 col-lg-3', page_html)]
+    items = []
+    seen = set()
+    for i, s in enumerate(starts):
+        e = starts[i + 1] if i + 1 < len(starts) else len(page_html)
+        card = page_html[s:e]
+
+        # ID（/client/auction-items/view/ID/BuyNow?...）
+        idm = re.search(r'/client/auction-items/view/(\d+)', card)
+        if not idm:
+            continue
+        aid = idm.group(1)
+        if aid in seen or not _VALID_ID.match(aid):
+            continue
+        seen.add(aid)
+
+        # 売却済み（SOLDバッジに hidden が無ければ売れている）→ 収集対象外
+        try:
+            sm = re.search(r'class="buy-now-sold-badge([^"]*)"', card)
+            if sm and "hidden" not in sm.group(1):
+                continue
+        except Exception:  # noqa: BLE001
+            pass
+
+        url = BASE_URL + "/client/auction-items/view/" + aid
+
+        # ブランド
+        try:
+            brand = _card_field(card, r'class="show-case-bland">([^<]+)<')
+        except Exception:  # noqa: BLE001
+            brand = ""
+
+        # タイトル（先頭の (12678_0252) のような管理番号は残してよい）
+        try:
+            title = _card_field(card, r'<b>(.*?)</b>')
+        except Exception:  # noqa: BLE001
+            title = ""
+
+        # 画像（resize.ecoauc.com のサムネ優先）
+        img = ""
+        try:
+            im = re.search(r'<img[^>]+src="(https://resize\.ecoauc\.com/[^"]+)"', card)
+            if not im:
+                im = re.search(r'<img[^>]+src="([^"]+)"', card)
+            if im:
+                img = im.group(1)
+                if img.startswith("//"):
+                    img = "https:" + img
+                elif img.startswith("/"):
+                    img = BASE_URL + img
+        except Exception:  # noqa: BLE001
+            img = ""
+
+        # 即決価格（data属性優先・表示文字列を代替）
+        buy_now_price = None
+        try:
+            m = re.search(r'data-asking-bid-closing-price="(\d+)"', card)
+            if m:
+                buy_now_price = _to_int(m.group(1))
+            else:
+                m = re.search(r'class="buy-now-price">[^\d]*([0-9,]+)', card)
+                buy_now_price = _to_int(m.group(1)) if m else None
+        except Exception:  # noqa: BLE001
+            buy_now_price = None
+
+        # 開始価格（data属性優先・カノピー表示を代替）
+        start_price = None
+        try:
+            m = re.search(r'data-starting-price="(\d+)"', card)
+            if m:
+                start_price = _to_int(m.group(1))
+            else:
+                m = re.search(
+                    r'開始価格</small>\s*<big class="canopy-value">\s*'
+                    r'(?:&yen;|¥)?\s*([0-9,]+)', card, re.S)
+                start_price = _to_int(m.group(1)) if m else None
+        except Exception:  # noqa: BLE001
+            start_price = None
+
+        # 入札単位
+        unit_price = None
+        try:
+            m = re.search(r'data-unit-price="(\d+)"', card)
+            unit_price = _to_int(m.group(1)) if m else None
+        except Exception:  # noqa: BLE001
+            unit_price = None
+
+        # ランク（値は </big> の外側にある。取れなければ空文字）
+        rank = ""
+        try:
+            m = re.search(
+                r'ランク</small>\s*<big class="canopy-value">\s*</big>\s*([A-Za-z0-9]+)',
+                card, re.S)
+            rank = m.group(1) if m else ""
+        except Exception:  # noqa: BLE001
+            rank = ""
+
+        # 出品順位 → "252/420" 形式
+        lot_position = ""
+        try:
+            m = re.search(
+                r'出品順位</small>\s*<big class="canopy-value">\s*(\d+)\s*'
+                r'&frasl;\s*(\d+)', card, re.S)
+            lot_position = f"{m.group(1)}/{m.group(2)}" if m else ""
+        except Exception:  # noqa: BLE001
+            lot_position = ""
+
+        # market-title（開催回・開始日時・レーン名を含む）
+        mt = ""
+        try:
+            mm = re.search(r'class="market-title">(.*?)</span>', card, re.S)
+            mt = mm.group(1) if mm else ""
+        except Exception:  # noqa: BLE001
+            mt = ""
+
+        # 開催回（第NNN回）
+        auction_round = ""
+        try:
+            m = re.search(r'第(\d+)回', mt)
+            auction_round = m.group(1) if m else ""
+        except Exception:  # noqa: BLE001
+            auction_round = ""
+
+        # 開始日時（（2026-06-26 10:00開始）。全角カッコ優先・半角も許容）
+        start_at = ""
+        try:
+            m = re.search(r'[（(](\d{4}-\d{2}-\d{2} \d{2}:\d{2})開始[）)]', mt)
+            start_at = m.group(1) if m else ""
+        except Exception:  # noqa: BLE001
+            start_at = ""
+
+        # レーン名（<br> 後ろのレーン行を優先し、日時カッコを除去。最悪フルテキスト）
+        lane = ""
+        try:
+            seg = re.split(r'<br\s*/?>', mt)[-1] if mt else mt
+            lane = re.sub(r"<[^>]+>", " ", seg)
+            lane = re.sub(r"\s+", " ", html.unescape(lane)).strip()
+            lane = re.sub(r'[（(]\d{4}-\d{2}-\d{2}.*$', '', lane).strip()
+            if not lane:  # 抽出できなければ market-title 全文を整形して入れる
+                full = re.sub(r"<[^>]+>", " ", mt)
+                lane = re.sub(r"\s+", " ", html.unescape(full)).strip()
+        except Exception:  # noqa: BLE001
+            lane = ""
+
+        # market-title 全文（落札相場の auction 列と同じ用途で互換保存）
+        try:
+            auction_full = re.sub(r"<[^>]+>", " ", mt)
+            auction_full = re.sub(r"\s+", " ", html.unescape(auction_full)).strip()
+        except Exception:  # noqa: BLE001
+            auction_full = ""
+
+        # あなたの入札額/事前入札額（"¥ 0" など。取れなければ None）
+        my_prebid = None
+        try:
+            m = re.search(r'item-show-value">\s*¥?\s*([0-9,]+)', card)
+            my_prebid = _to_int(m.group(1)) if m else None
+        except Exception:  # noqa: BLE001
+            my_prebid = None
+
+        # 互換: current_price には start_price（無ければ buy_now_price）を入れる。
+        # 既存のソート/フィルタ(price_asc/desc・min/max)がそのまま効くようにするため。
+        current_price = start_price if start_price is not None else buy_now_price
+
+        items.append({
+            "id": aid, "title": title, "url": url, "image": img,
+            "current_price": current_price, "keyword": keyword,
+            "brand": brand, "rank": rank,
+            # 即決には無い落札相場用フィールドは空で埋める（DB/UI互換のため）
+            "category": "", "shape": "", "sold_date": "", "auction": auction_full,
+            # 即決固有フィールド
+            "start_price": start_price, "buy_now_price": buy_now_price,
+            "unit_price": unit_price, "start_at": start_at,
+            "auction_round": auction_round, "lane": lane,
+            "lot_position": lot_position, "my_prebid": my_prebid,
+        })
+    return items
+
+
 # ----------------------------------------------------------------------
 # 保存
 # ----------------------------------------------------------------------
 def upsert(conn, item, now_iso):
+    # 即決(buy-now)／落札相場(market)どちらのitemでも欠損キーが無いよう既定値で埋める。
+    p = {
+        "id": item.get("id"),
+        "title": item.get("title", ""),
+        "url": item.get("url", ""),
+        "image": item.get("image", ""),
+        "current_price": item.get("current_price"),
+        "keyword": item.get("keyword", ""),
+        "brand": item.get("brand", ""),
+        "rank": item.get("rank", ""),
+        "category": item.get("category", ""),
+        "shape": item.get("shape", ""),
+        "sold_date": item.get("sold_date", ""),
+        "auction": item.get("auction", ""),
+        "start_price": item.get("start_price"),
+        "buy_now_price": item.get("buy_now_price"),
+        "unit_price": item.get("unit_price"),
+        "start_at": item.get("start_at", ""),
+        "auction_round": item.get("auction_round", ""),
+        "lane": item.get("lane", ""),
+        "lot_position": item.get("lot_position", ""),
+        "my_prebid": item.get("my_prebid"),
+        "now": now_iso,
+    }
     conn.execute(
         """
         INSERT INTO items (id, title, url, image, current_price, keyword,
                            brand, rank, category, shape, sold_date, auction,
+                           start_price, buy_now_price, unit_price, start_at,
+                           auction_round, lane, lot_position, my_prebid,
                            first_seen, last_seen)
         VALUES (:id, :title, :url, :image, :current_price, :keyword,
                 :brand, :rank, :category, :shape, :sold_date, :auction,
+                :start_price, :buy_now_price, :unit_price, :start_at,
+                :auction_round, :lane, :lot_position, :my_prebid,
                 :now, :now)
         ON CONFLICT(id) DO UPDATE SET
             title=excluded.title, image=excluded.image,
             current_price=excluded.current_price, keyword=excluded.keyword,
             brand=excluded.brand, rank=excluded.rank, category=excluded.category,
             shape=excluded.shape, sold_date=excluded.sold_date, auction=excluded.auction,
+            start_price=excluded.start_price, buy_now_price=excluded.buy_now_price,
+            unit_price=excluded.unit_price, start_at=excluded.start_at,
+            auction_round=excluded.auction_round, lane=excluded.lane,
+            lot_position=excluded.lot_position, my_prebid=excluded.my_prebid,
             last_seen=excluded.last_seen
         """,
-        {**item, "now": now_iso},
+        p,
     )
 
 
@@ -485,12 +769,13 @@ def collect(pages=PAGES_PER_KEYWORD, log=print):
             time.sleep(POLITE_DELAY)
         log(f"  「{kw}」 {kw_count}件（候補{raw_count}件から絞込）")
 
-    # ログインは通ったのに解析0件＝検索結果の構造に解析を合わせる必要あり
+    # ログインは通ったのに解析0件＝一覧ページの構造に解析を合わせる必要あり
     warning = ""
     if pages_fetched > 0 and total == 0:
+        src_label = "即決一覧(buy-now)" if SOURCE == "buynow" else "落札相場(market-prices)"
         warning = (
-            "ログインはできましたが商品を1件も解析できませんでした。"
-            "検索結果ページの構造に合わせてパーサー調整が必要です（eco_sample.html を確認）。"
+            f"ログインはできましたが{src_label}から商品を1件も解析できませんでした。"
+            f"一覧ページの構造に合わせてパーサー調整が必要です（{os.path.basename(ACTIVE_SAMPLE_PATH)} を確認）。"
         )
         log("⚠ " + warning)
 
@@ -498,6 +783,16 @@ def collect(pages=PAGES_PER_KEYWORD, log=print):
     if keywords:
         ph = ",".join("?" * len(keywords))
         conn.execute(f"DELETE FROM items WHERE keyword NOT IN ({ph})", keywords)
+    # SOURCE切替時の残骸ガード：現行ソースと不整合な旧データを除く。
+    # SOURCE=="buynow" のとき、即決固有データ（即決価格/開始価格/開催回）を一切持たず
+    # 落札日だけを持つ＝旧・落札相場(market)の残骸を掃除する。正当な即決行は消さない。
+    if SOURCE == "buynow":
+        conn.execute(
+            "DELETE FROM items "
+            "WHERE buy_now_price IS NULL AND start_price IS NULL "
+            "AND (auction_round IS NULL OR auction_round='') "
+            "AND sold_date IS NOT NULL AND sold_date<>''"
+        )
     # 3日見かけない商品は掃除
     seen_cut = (now - timedelta(days=3)).isoformat()
     conn.execute("DELETE FROM items WHERE last_seen < ?", (seen_cut,))
@@ -524,7 +819,7 @@ if __name__ == "__main__":
                 url, h = fetch_search(kws[0])
                 its = parse_search(h, kws[0], dump=True)
                 print(f"検索『{kws[0]}』→ 商品リンク {len(its)} 件を検出")
-                print(f"サンプルHTMLを {SAMPLE_PATH} に保存しました（解析精度の確認用）。")
+                print(f"サンプルHTMLを {ACTIVE_SAMPLE_PATH} に保存しました（解析精度の確認用）。")
                 if its[:1]:
                     s = its[0]
                     print(f"例: id={s['id']} 価格={s['current_price']} 画像={'有' if s['image'] else '無'} 題={s['title'][:30]}")
